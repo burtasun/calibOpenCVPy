@@ -69,14 +69,10 @@ if __name__=='__main__':
         exit(1)
     
     fnSave = f'{_pars.pathDirSave}intrinsics.json'
-    try:
-        fs=cv.FileStorage(fnSave,cv.FileStorage_WRITE | cv.FILE_STORAGE_FORMAT_JSON)
-        fs.write('cameraMatrix',cameraMatrix)
-        fs.write('distCoeffs',distCoeffs)
-        fs.release()
-    except Exception:
+    res = saveIntrinsics(fnSave,cameraMatrix,distCoeffs)
+    if res==False:
         print('No se han guardado los parametros de calibracion')
-        print(f'Calibracion guardada en {fnSave}')
+    print(f'Calibracion guardada en {fnSave}')
 
     if _pars.vis.viewUndistort:
         for idValid in idValids:

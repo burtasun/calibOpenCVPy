@@ -8,6 +8,10 @@ class Pars:
     minValidImgs = 3
     pathImgs = './KR6 vision/Calib_27_09_24/*.bmp'
     pathDirSave = './output/'
+    class HandEye:
+        pathJsonRobotPoses=r'.\handeye\1\handEyePts.dat'
+        modeStationaryCam=True#false moving
+    handEye = HandEye()
     class Vis:
         previewImg = False
         previewBlobs = False

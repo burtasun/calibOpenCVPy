@@ -143,3 +143,29 @@ def runCalibration(
     print(f'distCoeffs:\n {distCoeffs}')
 
     return (True,cameraMatrix,distCoeffs)
+
+def saveIntrinsics(fnSave,cameraMatrix,distCoeffs):
+    try:
+        fs=cv.FileStorage(fnSave,cv.FileStorage_WRITE | cv.FILE_STORAGE_FORMAT_JSON)
+        fs.write('cameraMatrix',cameraMatrix)
+        fs.write('distCoeffs',distCoeffs)
+        fs.release()
+        return True
+    except Exception:
+        return False
+
+def loadIntrinsics(fnLoad):
+    try:
+        fs=cv.FileStorage(fnLoad,cv.FileStorage_READ | cv.FILE_STORAGE_FORMAT_JSON)
+        cameraMatrix = np.array(fs.getNode('cameraMatrix').mat())
+        distCoeffs = np.array(fs.getNode('distCoeffs').mat())
+        fs.release()
+        return (cameraMatrix, distCoeffs)
+    except Exception as e:
+        print(f'Error: {e}')
+        return None
+    
+def img2uint8Percent(im:np.array,percentile100=100.0):
+    mqMq=[(100-percentile100)/2,100-(100-percentile100)/2]
+    mM=np.percentile(im,mqMq)
+    return np.clip(255*(im-mM[0])/(mM[1]-mM[0]),0,255).astype(np.uint8)
