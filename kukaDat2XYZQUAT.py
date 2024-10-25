@@ -124,7 +124,40 @@ class E6PosExtractor:
         # Serialize self.positions dictionary to a JSON file
         with open(filename, 'w') as json_file:
             json.dump(self.positions, json_file, indent=4)
-
+    
+    def get_position_and_rotation_matrices(self):
+        # Dictionary to store position and rotation matrices
+        matrices = {}
+        
+        for position_id, data in self.positions.items():
+            # Extract position (in mm) and Euler angles
+            position = np.array(data['position_mm'])
+            a, b, c = math.radians(data['rodrigues'][0]), math.radians(data['rodrigues'][1]), math.radians(data['rodrigues'][2])
+            
+            # Recalculate rotation matrix for ZYX order
+            Rz = np.array([
+                [math.cos(a), -math.sin(a), 0],
+                [math.sin(a),  math.cos(a), 0],
+                [0, 0, 1]
+            ])
+            Ry = np.array([
+                [math.cos(b), 0, math.sin(b)],
+                [0, 1, 0],
+                [-math.sin(b), 0, math.cos(b)]
+            ])
+            Rx = np.array([
+                [1, 0, 0],
+                [0, math.cos(c), -math.sin(c)],
+                [0, math.sin(c),  math.cos(c)]
+            ])
+            
+            # Final rotation matrix
+            rotation_matrix = Rz @ Ry @ Rx
+            
+            # Store position vector and rotation matrix in the dictionary
+            matrices[position_id] = (position, rotation_matrix)
+        
+        return matrices
 
 
 class Pars:
