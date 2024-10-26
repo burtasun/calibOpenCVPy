@@ -11,6 +11,7 @@ class Pars:
     class HandEye:
         pathJsonRobotPoses=r'.\handeye\1\handEyePts.dat'
         modeStationaryCam=True#false moving
+        blobDetectPathPars='blobDetectorHe.dat'
     handEye = HandEye()
     class Vis:
         previewImg = False
