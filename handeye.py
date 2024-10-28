@@ -95,10 +95,19 @@ def posRot2posAndRot33(posRot, inv=False):
         rot.append(r)
     return pos, rot
 
+def posRot2M44(posRot):
+    p,r=posRot
+    ret=np.eye(4)
+    if not(r.shape[0]==3 and r.shape[1]==3):
+        r,_=cv.Rodrigues(r)
+    ret[0:3,0:3]=r
+    ret[0:3,3]=np.array(p).ravel()
+    return ret
 #Hand eye
 #   estimando poses patron respecto a camara
 #       se asume que se dispone de parametros calibracion camara
 if __name__=='__main__':
+    np.set_printoptions(precision=3)
     print('hand eye')
     _pars.pathImgs = './handeye/3/*.tiff'
     _pars.handEye.pathJsonRobotPoses='./handeye/3/handEyePts.dat'
@@ -202,21 +211,24 @@ if __name__=='__main__':
         print(f'{i+1}/{len(pathsImages)}')
 
         if _pars.vis.viewUndistort:
-            imRect = cv.undistort(gray, cameraMatrix, distCoeffs)
-            imRgb = cv.cvtColor(imRect,cv.COLOR_GRAY2RGB)
+            imBgrRect=imBgr.copy()
+            for i in range(3):
+                imBgrRect[...,i]=cv.undistort(imBgr[...,i], cameraMatrix, distCoeffs)
             pts=np.zeros([4,3],np.float32)
             pts[1:,:]=np.eye(3,3)*_pars.pat.distEdges
             [imPts,_]=cv.projectPoints(pts, rvec, tvec, cameraMatrix, distCoeffs)
             imPts=imPts.squeeze().astype(np.uint)
             for id in range(1,4):
-                cv.line(imRgb,imPts[0,:],imPts[id,:],((id==3)*255,(id==2)*255,(id==1)*255),3)
-            previewImg(imRgb)
+                cv.line(imBgrRect,imPts[0,:],imPts[id,:],((id==3)*255,(id==2)*255,(id==1)*255),3)
+            previewImg(imBgrRect)
     #buclePoses
 
     print(f'{len(idValids)} / {len(pathsImages)}!')
     print('Hand eye calibration')
 
+    t_robot_flange, r_robot_flange = posRot2posAndRot33(posRot_robot_flange,False)
     t_flange_robot, r_flange_robot = posRot2posAndRot33(posRot_robot_flange,True)
+    t_cam_pattern, r_cam_pattern = posRot2posAndRot33(posRot_cam_pattern,False)
     t_pattern_cam, r_pattern_cam = posRot2posAndRot33(posRot_cam_pattern,True)
 
     #OpenCV denom: world = pattern // base: robot base //
@@ -230,19 +242,47 @@ if __name__=='__main__':
     t_pattern_flange = np.zeros([3,1])
     cv.calibrateRobotWorldHandEye(
         #inputs
-        R_world2cam=r_pattern_cam,#eye in hand=> r_cam_pattern
-        t_world2cam=t_pattern_cam,#eye in hand=> t_cam_pattern
+        R_world2cam=r_pattern_cam,
+        t_world2cam=t_pattern_cam,
         R_base2gripper=r_flange_robot,
         t_base2gripper=t_flange_robot,
         #outputs
-        R_base2world=r_cam_robot,#eye in hand=> r_pattern_robot
-        t_base2world=t_cam_robot,#eye in hand=> t_pattern_robot
-        R_gripper2cam=r_pattern_flange,#eye in hand=> r_cam_flange
-        t_gripper2cam=t_pattern_flange,#eye in hand=> t_cam_flange
+        R_base2world=r_cam_robot,
+        t_base2world=t_cam_robot,
+        R_gripper2cam=r_pattern_flange,
+        t_gripper2cam=t_pattern_flange,
         method=cv.CALIB_ROBOT_WORLD_HAND_EYE_SHAH)
-    t_robot_cam,r_robot_cam=invPosRot((t_cam_robot,r_cam_robot))
-    t_flange_pattern,r_flange_pattern=invPosRot((t_pattern_flange,r_pattern_flange))
-    print(f't_robot_cam\n{t_robot_cam}\n\n')
-    print(f't_flange_pattern\n{t_flange_pattern}\n\n')
-    #TODO renombrar + comprobar errores
+
+    T_robot_cam = posRot2M44(invPosRot((t_cam_robot,r_cam_robot)))
+    print(f'T_robot_cam\n{T_robot_cam}')
+    T_flange_pattern = posRot2M44(invPosRot((t_pattern_flange,r_pattern_flange)))
+    print(f'T_flange_pattern\n{T_flange_pattern}')
+
+    def computeMeanErrors():
+        #Eye(4)~=T_cam_pattern_i * T_pattern_flange * T_flange_robot_i * T_robot_cam
+        #   2 métricas
+        #       media errores posición: err = (1/N)*Sum_i^N{||tx^2+ty^2+tz^2||^0.5}
+        #       media errores rotación theta rodriguez: err = (1/N)*Sum_i^N{theta_i}
+        T_pattern_flange = posRot2M44((t_pattern_flange,r_pattern_flange))
+        T_robot_cam = posRot2M44(invPosRot((t_cam_robot,r_cam_robot)))
+        
+        N = len(posRot_cam_pattern)
+        errsPos=np.zeros(N)#dists
+        errsRot=np.zeros(N)#rot
+        for i in range(N):
+            errEye_i = \
+                posRot2M44(posRot_cam_pattern[i]) @ \
+                T_pattern_flange @ \
+                posRot2M44(invPosRot((t_robot_flange[i], r_robot_flange[i]))) @ \
+                T_robot_cam
+            errsPos[i]=np.linalg.norm(errEye_i[0:3,3])
+            #norm rodriguez (openCV) => theta
+            errsRot[i]=np.linalg.norm(cv.Rodrigues(errEye_i[0:3,0:3])[0])
+        meanErrs_posRot = np.array([np.mean(errsPos), np.mean(errsRot)])
+        print(f'errsPos_MM:\n{errsPos}\n\n')
+        print(f'errsRot_Deg:\n{errsRot*180/math.pi}\n\n')
+        print(f'meanErrs\n\tPos_MM {meanErrs_posRot[0]}\n\tRot_Deg {meanErrs_posRot[1]*180/math.pi}\n\n')
+        return meanErrs_posRot
+    #computeMeanErrors
+    meanErrs_posRot = computeMeanErrors()
 #main
