@@ -22,13 +22,11 @@ def getRobotPoseAsPosRot(jsonPath):
         None
     file_content = f.read()
     extractor.extract_positions(file_content)
-    posMats = extractor.get_position_and_rotation_matrices()
     #output as ordered list
-    ret=[]
-    for [key,item] in posMats.items():
-        ret.append(item)
+    ret = extractor.get_position_and_rotation_matrices()
     return ret
 
+#blobs rojo y verde esquinas
 def segmentColoredBlobs(imBgr:np.ndarray,colors:np.ndarray, preview = False):
     imBgrUint = img2uint8Percent(imBgr,100)
     imHsv = cv.cvtColor(imBgrUint,cv.COLOR_BGR2HSV)
@@ -78,6 +76,25 @@ def segmentColoredBlobs(imBgr:np.ndarray,colors:np.ndarray, preview = False):
         cv.waitKey()
     return (ctrRed[0],ctrGreen[0])
 
+def invPosRot(posRot):
+    p,r=posRot
+    #p_b = R_b_g * p_g  + t_b_g
+    #p_g = R_b_g^T * p_b - R_b_g^T * t_b_g
+    p = -r.transpose()@p
+    r=r.transpose()
+    return (p,r)
+def posRot2posAndRot33(posRot, inv=False):
+    pos=[]
+    rot=[]
+    for (p,r) in posRot:
+        if not(r.shape[0]==3 and r.shape[1]==3):
+            r,_=cv.Rodrigues(r)
+        if inv:
+            (p,r)=invPosRot((p,r))
+        pos.append(np.array(p).reshape(3,1))
+        rot.append(r)
+    return pos, rot
+
 #Hand eye
 #   estimando poses patron respecto a camara
 #       se asume que se dispone de parametros calibracion camara
@@ -88,8 +105,8 @@ if __name__=='__main__':
     #Task: handEyeCalib
     #   Parse set pts robot
     #       list tuple pos & R33
-    posRot_robot_flange = getRobotPoseAsPosRot(_pars.handEye.pathJsonRobotPoses)
-    if (posRot_robot_flange is None) or (len(posRot_robot_flange)==0):
+    posRot_robot_flange_all = getRobotPoseAsPosRot(_pars.handEye.pathJsonRobotPoses)
+    if (posRot_robot_flange_all is None) or (len(posRot_robot_flange_all)==0):
         print(f'no se pudo parsear {_pars.handEye.pathJsonRobotPoses}')
 
     #Get cam intrinsic and distCoeffs
@@ -102,6 +119,8 @@ if __name__=='__main__':
 
     #PosRot patron respecto a camara
     posRot_cam_pattern = []
+    #Poses tcp respecto a robot
+    posRot_robot_flange = []
 
     #blob detector opencv para extraccion puntos
     try:
@@ -125,18 +144,13 @@ if __name__=='__main__':
         if found==False:
             print(f'imagen {fname} sin patron detectado!')
             continue
-        idValids.append(i)
         #extraer frame patron respecto a camara
         flags = cv.SOLVEPNP_SQPNP
         [retval, rvec, tvec]=cv.solvePnP(objp,pts,cameraMatrix,distCoeffs,flags=flags)
         if retval==False:
-            print(f'{i} mal')
+            print(f'{i} sin identificar pose patron respecto a camara')
             continue
-        idValids.append(i)
-        posRot_cam_pattern.append((tvec,cv.Rodrigues(rvec)))
-        print(f'{i+1}/{len(pathsImages)}')
-
-        #Desambiguar origen patron
+        #Desambiguar origen patron con marcas de colores
         def disambiguatePatternPose(imBgr:np.array,rvec, tvec, cameraMatrix, distCoeffs):
             #empleando circulo rojo (origen) y verde (eje X)
             #esquinas patron
@@ -153,7 +167,7 @@ if __name__=='__main__':
             [imPts,_]=cv.projectPoints(pts, rvec, tvec, cameraMatrix, distCoeffs)
             imPts=imPts.squeeze()
             #asociar esquinas a puntos de colores por distancia minima
-            kps = segmentColoredBlobs(imBgr,np.array([0,0,255,0,255,0]).reshape((2,3)).astype(np.uint8),True)
+            kps = segmentColoredBlobs(imBgr,np.array([0,0,255,0,255,0]).reshape((2,3)).astype(np.uint8),False)
             if kps is None:
                 return None
             ids=[]
@@ -164,10 +178,9 @@ if __name__=='__main__':
                 if dists[argmin]<200:
                     ids.append(int(argmin))
             if ids[0]==0 and ids[1]==1:
-                return rvec, tvec
+                return tvec, rvec
             o = pts[ids[0],:]
             x = pts[ids[1],:]
-            v0x = (x-o)/np.linalg.norm(x-o,2)
             v0x = (x-o)/np.linalg.norm(x-o,2)
             v0y = np.cross(np.array([0,0,1]),v0x)
             v0y = v0y/np.linalg.norm(v0y,2)
@@ -177,11 +190,16 @@ if __name__=='__main__':
             R_cam_orig,_ = cv.Rodrigues(rvec)
             tvec = R_cam_orig@o.transpose()+tvec.squeeze()
             R_cam_new = R_cam_orig@R_orig_new
-            rvec,_ = cv.Rodrigues(R_cam_new)
-            return rvec,tvec
+            rvec,_=cv.Rodrigues(R_cam_new)
+            return tvec,rvec
         # disambiguatePatternPose
-
-        rvec,tvec=disambiguatePatternPose(imBgr,rvec,tvec,cameraMatrix,distCoeffs)
+        tvec,rvec=disambiguatePatternPose(imBgr,rvec,tvec,cameraMatrix,distCoeffs)
+        
+        #añadir poses robot & pose patron
+        posRot_cam_pattern.append((tvec,rvec))
+        posRot_robot_flange.append(posRot_robot_flange_all[i])
+        idValids.append(i)
+        print(f'{i+1}/{len(pathsImages)}')
 
         if _pars.vis.viewUndistort:
             imRect = cv.undistort(gray, cameraMatrix, distCoeffs)
@@ -193,45 +211,38 @@ if __name__=='__main__':
             for id in range(1,4):
                 cv.line(imRgb,imPts[0,:],imPts[id,:],((id==3)*255,(id==2)*255,(id==1)*255),3)
             previewImg(imRgb)
-
+    #buclePoses
 
     print(f'{len(idValids)} / {len(pathsImages)}!')
-    # if len(imgpoints)<_pars.minValidImgs:
-    #      print(f'el numero de imagenes con patron detectado, {len(imgpoints)}, es inferior a {_pars.minValidImgs}, SALIENDO')
-    #      cleanupAndExitFail()
-    # [imWidth,imHeight]=gray.shape
+    print('Hand eye calibration')
 
-    # print('calibrando')
-    # [okCalib,cameraMatrix,distCoeffs] = runCalibration(objpoints,imgpoints, imWidth, imHeight)
+    t_flange_robot, r_flange_robot = posRot2posAndRot33(posRot_robot_flange,True)
+    t_pattern_cam, r_pattern_cam = posRot2posAndRot33(posRot_cam_pattern,True)
 
-    # if okCalib==False:
-    #     print("Calibracion fallida")
-    #     exit(1)
-    
-    # fnSave = f'{_pars.pathDirSave}intrinsics.json'
-    # try:
-    #     fs=cv.FileStorage(fnSave,cv.FileStorage_WRITE | cv.FILE_STORAGE_FORMAT_JSON)
-    #     fs.write('cameraMatrix',cameraMatrix)
-    #     fs.write('distCoeffs',distCoeffs)
-    #     fs.release()
-    # except Exception:
-    #     print('No se han guardado los parametros de calibracion')
-    #     print(f'Calibracion guardada en {fnSave}')
-
-    # if _pars.vis.viewUndistort:
-    #     for idValid in idValids:
-    #         img = cv.imread(images[idValid],cv.IMREAD_GRAYSCALE)
-    #         imRect = cv.undistort(img, cameraMatrix, distCoeffs)
-    #         imBoth = np.zeros((img.shape[0],img.shape[1]*2),dtype=np.uint8)
-    #         imBoth[:,:img.shape[1]]=img
-    #         imBoth[:,img.shape[1]:]=imRect
-    #         imBothResize = cv.resize(imBoth,None,None,0.5,0.5)
-    #         imBothResize=cv.cvtColor(imBothResize, cv.COLOR_GRAY2BGR)
-    #         cv.putText(imBothResize,'ORIG',(int(imBothResize.shape[1]*0.25),20), 1, 1, (0, 255, 0))
-    #         cv.putText(imBothResize,'RECT',(int(imBothResize.shape[1]*0.75),20), 1, 1, (0, 255, 0))
-    #         previewImg(imBothResize, (f'{images[idValid]}'), 2000)
-
-    # if okCalib==False:
-    #      cleanupAndExitFail()
-    
+    #OpenCV denom: world = pattern // base: robot base //
+    #Eye in hand
+    #   => parametros por defecto
+    #Pattern in hand / static eye
+    #   => invertir camara y patron // 'world'(pattern) <=> 'cam'
+    r_cam_robot = np.eye(3)
+    t_cam_robot = np.zeros([3,1])
+    r_pattern_flange = np.eye(3)
+    t_pattern_flange = np.zeros([3,1])
+    cv.calibrateRobotWorldHandEye(
+        #inputs
+        R_world2cam=r_pattern_cam,#eye in hand=> r_cam_pattern
+        t_world2cam=t_pattern_cam,#eye in hand=> t_cam_pattern
+        R_base2gripper=r_flange_robot,
+        t_base2gripper=t_flange_robot,
+        #outputs
+        R_base2world=r_cam_robot,#eye in hand=> r_pattern_robot
+        t_base2world=t_cam_robot,#eye in hand=> t_pattern_robot
+        R_gripper2cam=r_pattern_flange,#eye in hand=> r_cam_flange
+        t_gripper2cam=t_pattern_flange,#eye in hand=> t_cam_flange
+        method=cv.CALIB_ROBOT_WORLD_HAND_EYE_SHAH)
+    t_robot_cam,r_robot_cam=invPosRot((t_cam_robot,r_cam_robot))
+    t_flange_pattern,r_flange_pattern=invPosRot((t_pattern_flange,r_pattern_flange))
+    print(f't_robot_cam\n{t_robot_cam}\n\n')
+    print(f't_flange_pattern\n{t_flange_pattern}\n\n')
+    #TODO renombrar + comprobar errores
 #main
