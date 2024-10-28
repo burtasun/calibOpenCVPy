@@ -36,12 +36,12 @@ class E6PosExtractor:
                 #     'position_mm': position_mm,
                 #     'quaternion': quaternion
                 # }
-                rodrigues_vector = self._euler_to_rodrigues(parsed_data['A'], parsed_data['B'], parsed_data['C'])
+                rotMat = self._euler_to_matrix(parsed_data['A'], parsed_data['B'], parsed_data['C'])
                 
                 # Store the position (in mm) and Rodrigues rotation vector data
                 self.positions[position_id] = {
                     'position_mm': position_mm,
-                    'rodrigues': rodrigues_vector
+                    'rotationMatrix': rotMat
                 }
 
     def _parse_content(self, content):
@@ -77,7 +77,32 @@ class E6PosExtractor:
         qz = sz * cy * cx - cz * sy * sx
         
         return [qw, qx, qy, qz]
-
+    def _euler_to_matrix(self, a, b, c):
+        # Convert angles from degrees to radians
+        a_rad = math.radians(a)
+        b_rad = math.radians(b)
+        c_rad = math.radians(c)
+        
+        # Calculate the rotation matrix for ZYX rotation order
+        Rz = np.array([
+            [math.cos(a_rad), -math.sin(a_rad), 0],
+            [math.sin(a_rad),  math.cos(a_rad), 0],
+            [0, 0, 1]
+        ])
+        Ry = np.array([
+            [math.cos(b_rad), 0, math.sin(b_rad)],
+            [0, 1, 0],
+            [-math.sin(b_rad), 0, math.cos(b_rad)]
+        ])
+        Rx = np.array([
+            [1, 0, 0],
+            [0, math.cos(c_rad), -math.sin(c_rad)],
+            [0, math.sin(c_rad),  math.cos(c_rad)]
+        ])
+        
+        # Combined rotation matrix for Rz * Ry * Rx
+        R = Rz @ Ry @ Rx
+        return R
     def _euler_to_rodrigues(self, a, b, c):
         # Convert angles from degrees to radians
         a_rad = math.radians(a)
@@ -127,35 +152,11 @@ class E6PosExtractor:
     
     def get_position_and_rotation_matrices(self):
         # Dictionary to store position and rotation matrices
-        matrices = {}
+        matrices = []
         
         for position_id, data in self.positions.items():
-            # Extract position (in mm) and Euler angles
-            position = np.array(data['position_mm'])
-            a, b, c = math.radians(data['rodrigues'][0]), math.radians(data['rodrigues'][1]), math.radians(data['rodrigues'][2])
             
-            # Recalculate rotation matrix for ZYX order
-            Rz = np.array([
-                [math.cos(a), -math.sin(a), 0],
-                [math.sin(a),  math.cos(a), 0],
-                [0, 0, 1]
-            ])
-            Ry = np.array([
-                [math.cos(b), 0, math.sin(b)],
-                [0, 1, 0],
-                [-math.sin(b), 0, math.cos(b)]
-            ])
-            Rx = np.array([
-                [1, 0, 0],
-                [0, math.cos(c), -math.sin(c)],
-                [0, math.sin(c),  math.cos(c)]
-            ])
-            
-            # Final rotation matrix
-            rotation_matrix = Rz @ Ry @ Rx
-            
-            # Store position vector and rotation matrix in the dictionary
-            matrices[position_id] = (position, rotation_matrix)
+            matrices.append((data["position_mm"],data["rotationMatrix"]))
         
         return matrices
 
