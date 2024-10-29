@@ -10,11 +10,6 @@ from Pars import _pars, Pars
 from ocvAuxFuncs import *
 from kukaDat2XYZQUAT import E6PosExtractor
     
-
-def cleanupAndExitFail():
-    cv.destroyAllWindows()
-    exit(1)
-
 def getRobotPoseAsPosRot(jsonPath):
     extractor = E6PosExtractor()
     f = open(jsonPath,'r')
@@ -76,33 +71,6 @@ def segmentColoredBlobs(imBgr:np.ndarray,colors:np.ndarray, preview = False):
         cv.waitKey()
     return (ctrRed[0],ctrGreen[0])
 
-def invPosRot(posRot):
-    p,r=posRot
-    #p_b = R_b_g * p_g  + t_b_g
-    #p_g = R_b_g^T * p_b - R_b_g^T * t_b_g
-    p = -r.transpose()@p
-    r=r.transpose()
-    return (p,r)
-def posRot2posAndRot33(posRot, inv=False):
-    pos=[]
-    rot=[]
-    for (p,r) in posRot:
-        if not(r.shape[0]==3 and r.shape[1]==3):
-            r,_=cv.Rodrigues(r)
-        if inv:
-            (p,r)=invPosRot((p,r))
-        pos.append(np.array(p).reshape(3,1))
-        rot.append(r)
-    return pos, rot
-
-def posRot2M44(posRot):
-    p,r=posRot
-    ret=np.eye(4)
-    if not(r.shape[0]==3 and r.shape[1]==3):
-        r,_=cv.Rodrigues(r)
-    ret[0:3,0:3]=r
-    ret[0:3,3]=np.array(p).ravel()
-    return ret
 #Hand eye
 #   estimando poses patron respecto a camara
 #       se asume que se dispone de parametros calibracion camara
