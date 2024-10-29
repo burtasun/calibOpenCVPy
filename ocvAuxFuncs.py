@@ -164,6 +164,26 @@ def loadIntrinsics(fnLoad):
     except Exception as e:
         print(f'Error: {e}')
         return None
+def saveHandEye(fnSave,T_robot_cam:np.array,T_flange_pattern:np.array):
+    try:
+        fs=cv.FileStorage(fnSave,cv.FileStorage_WRITE | cv.FILE_STORAGE_FORMAT_JSON)
+        fs.write('T_robot_cam',T_robot_cam)
+        fs.write('T_flange_pattern',T_flange_pattern)
+        fs.release()
+        return True
+    except Exception:
+        return False
+
+def loadHandEye(fnLoad):
+    try:
+        fs=cv.FileStorage(fnLoad,cv.FileStorage_READ | cv.FILE_STORAGE_FORMAT_JSON)
+        T_robot_cam = np.array(fs.getNode('T_robot_cam').mat())
+        T_flange_pattern = np.array(fs.getNode('T_flange_pattern').mat())
+        fs.release()
+        return (T_robot_cam,T_flange_pattern)
+    except Exception as e:
+        print(f'Error: {e}')
+        return None
     
 def img2uint8Percent(im:np.array,percentile100=100.0):
     mqMq=[(100-percentile100)/2,100-(100-percentile100)/2]

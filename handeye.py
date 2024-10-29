@@ -285,4 +285,17 @@ if __name__=='__main__':
         return meanErrs_posRot
     #computeMeanErrors
     meanErrs_posRot = computeMeanErrors()
+
+    if not(meanErrs_posRot[0]<_pars.handEye.maxErrPosMM and meanErrs_posRot[1]<_pars.handEye.maxErrRotDeg*math.pi/180):
+        print(f'Error de calibración excesivos:\n')
+        print(f'\t\tcalib\tmax\n')
+        print(f'\tpos\t{meanErrs_posRot[0]}\t{_pars.handEye.maxErrPosMM}')
+        print(f'\trot\t{meanErrs_posRot[1]*180/math.pi}\t{_pars.handEye.maxErrRotDeg}')
+        exit(1)
+    fnSave = f'{_pars.pathDirSave}handEye.json'        
+    if saveHandEye(fnSave,T_robot_cam,T_flange_pattern):
+        print('Handeye params saved')
+    else:
+        print('Handeye params NOT saved')
+
 #main
