@@ -217,3 +217,107 @@ def posRot2M44(posRot):
     ret[0:3,0:3]=r
     ret[0:3,3]=np.array(p).ravel()
     return ret
+
+
+
+
+#blobs rojo y verde esquinas
+def segmentColoredBlobs(imBgr:np.ndarray,colors:np.ndarray, preview = False):
+    imBgrUint = img2uint8Percent(imBgr,100)
+    imHsv = cv.cvtColor(imBgrUint,cv.COLOR_BGR2HSV)
+    h=imHsv[:,:,0]
+    h=cv.medianBlur(h,3)
+    s=imHsv[:,:,1]
+    s=cv.medianBlur(s,3)
+    regRed = 255*np.logical_and(h<64,s>150).astype(np.uint8)
+    se = cv.getStructuringElement(cv.MORPH_ELLIPSE,(5,5))
+    regRed=cv.morphologyEx(regRed,cv.MORPH_CLOSE,se)
+    regGreen = 255*np.logical_and(s>100,np.logical_and(h>80,h<150)).astype(np.uint8)
+    regGreen=cv.morphologyEx(regGreen,cv.MORPH_CLOSE,se)
+    def filterContours(contours):
+        valids=[]
+        centers=[]
+        for cnt in contours:
+            area=cv.contourArea(cnt)
+            if not(area > 1000 and area < 6000): continue
+            perimeter = cv.arcLength(cnt, True)
+            if perimeter == 0: continue
+            circularity = 4*math.pi*(area/(perimeter*perimeter))
+            if not(circularity>0.2 and circularity <= 1000): continue
+            rectRotated = cv.minAreaRect(cnt)
+            sz = rectRotated[1]
+            if not(sz[0]/sz[1] > 0.8 and sz[0]/sz[1] < 1.2): continue
+            
+            M = cv.moments(cnt)
+            cx = int(M['m10']/M['m00'])
+            cy = int(M['m01']/M['m00'])
+            centers.append((cx,cy))
+            valids.append(cnt)
+        return (centers,valids)
+
+    cnts,im2 = cv.findContours(regRed, cv.RETR_LIST , cv.CHAIN_APPROX_SIMPLE)
+    ctrRed,cntsRed=filterContours(cnts)
+    cnts,im2 = cv.findContours(regGreen, cv.RETR_LIST , cv.CHAIN_APPROX_SIMPLE)
+    ctrGreen,cntsGreen=filterContours(cnts)
+
+    if len(ctrRed)!=1 and len(ctrGreen)!=1:
+        return None
+    if preview:
+        # imBgrUint = cv.drawContours(imBgrUint, cntsRed, -1, (0,255,0), 3)
+        cv.circle(imBgrUint, ctrRed[0],10,(0,0,255),-1)
+        cv.circle(imBgrUint, ctrGreen[0],10,(0,255,0),-1)
+        imBgrUint=cv.resize(imBgrUint,None,None,0.5,0.5)
+        cv.imshow('previewWin',imBgrUint)
+        cv.waitKey()
+    return (ctrRed[0],ctrGreen[0])
+
+
+
+
+
+
+
+
+#Desambiguar origen patron con marcas de colores
+def disambiguatePatternPose(imBgr:np.array,rvec, tvec, cameraMatrix, distCoeffs):
+    #empleando circulo rojo (origen) y verde (eje X)
+    #esquinas patron
+    pts=np.array([
+        0,0,0,
+        1,0,0,
+        0,1,0,
+        1,1,0
+    ]).reshape(4,3).astype(float)
+    pts*=_pars.pat.distEdges
+    pts[:,0]*=_pars.pat.dims[0]-1
+    pts[:,1]*=_pars.pat.dims[1]-1
+    #Proyect pts img
+    [imPts,_]=cv.projectPoints(pts, rvec, tvec, cameraMatrix, distCoeffs)
+    imPts=imPts.squeeze()
+    #asociar esquinas a puntos de colores por distancia minima
+    kps = segmentColoredBlobs(imBgr,np.array([0,0,255,0,255,0]).reshape((2,3)).astype(np.uint8),False)
+    if kps is None:
+        return None
+    ids=[]
+    kps=np.array(kps)
+    for kp in kps:
+        dists = np.linalg.norm(imPts-kp[np.newaxis,:],2,axis=1)
+        argmin = np.argmin(dists)
+        if dists[argmin]<200:
+            ids.append(int(argmin))
+    if ids[0]==0 and ids[1]==1:
+        return tvec, rvec
+    o = pts[ids[0],:]
+    x = pts[ids[1],:]
+    v0x = (x-o)/np.linalg.norm(x-o,2)
+    v0y = np.cross(np.array([0,0,1]),v0x)
+    v0y = v0y/np.linalg.norm(v0y,2)
+    R_orig_new = np.eye(3,3)
+    R_orig_new[:,0]=v0x
+    R_orig_new[:,1]=v0y
+    R_cam_orig,_ = cv.Rodrigues(rvec)
+    tvec = R_cam_orig@o.transpose()+tvec.squeeze()
+    R_cam_new = R_cam_orig@R_orig_new
+    rvec,_=cv.Rodrigues(R_cam_new)
+    return tvec,rvec
+# disambiguatePatternPose
