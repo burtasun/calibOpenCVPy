@@ -19,7 +19,7 @@ class Pars:
         previewImg = False
         previewBlobs = False
         previewPatterns = False
-        viewUndistort = False
+        viewUndistort = True
     vis = Vis()
 _pars = Pars()
 _previewWin='PreviewWin'

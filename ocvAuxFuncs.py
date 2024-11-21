@@ -272,15 +272,108 @@ def segmentColoredBlobs(imBgr:np.ndarray,colors:np.ndarray, preview = False):
     return (ctrRed[0],ctrGreen[0])
 
 
+#filtrado por varios atributos
+def filterContours(contours, 
+                   areaRange=[5000,30000], 
+                   circularityRange=[0.5,1], 
+                   rectWidthRange=None, rectAspectRatioRange=[0.7,1.4],
+                   minRectFillRatio=None):
+    valids=[]
+    centers=[]
+    for cnt in contours:
+        area=cv.contourArea(cnt)
+        if not(area > areaRange[0] and area < areaRange[1]): continue
+        perimeter = cv.arcLength(cnt, True)
+        if perimeter == 0: continue
+        if circularityRange is not None:
+            circularity = 4*math.pi*(area/(perimeter*perimeter))
+            if not(circularity>circularityRange[0] and circularity <= circularityRange[1]): continue
+
+        rectRotated = cv.minAreaRect(cnt)
+        center,sz,angle = rectRotated
+        if rectAspectRatioRange is not None:
+            if not(sz[0]/sz[1] > rectAspectRatioRange[0] and sz[0]/sz[1] < rectAspectRatioRange[1]): continue
+        if rectWidthRange is not None:
+            if not(sz[0]>rectWidthRange[0] and sz[0]<rectWidthRange[1]): continue
+        if minRectFillRatio is not None:
+            rectFillRatio = area/(sz[0]*sz[1])
+            if rectFillRatio < minRectFillRatio: continue
+        M = cv.moments(cnt)
+        cx = int(M['m10']/M['m00'])
+        cy = int(M['m01']/M['m00'])
+        centers.append((cx,cy))
+        valids.append(cnt)
+
+    return (centers,valids)
 
 
+def segmentGrayBlobs(gray:np.ndarray, preview = False):
+    meanAdaptBlockSize = 50
+    meanAdaptBlockSize = meanAdaptBlockSize+(meanAdaptBlockSize+1)%2#impar
+    thresh = cv.adaptiveThreshold(gray,255,cv.ADAPTIVE_THRESH_MEAN_C,cv.THRESH_BINARY, meanAdaptBlockSize,2)
+    thresh = cv.bitwise_not(thresh)
+    # cv.imshow('win',thresh)
+    # cv.waitKey()
+    contours,im2 = cv.findContours(thresh, cv.RETR_LIST , cv.CHAIN_APPROX_SIMPLE)
 
+    # imgShow=gray.copy()
+    # imgShow=cv.drawContours(imgShow, contours, -1, 255, cv.FILLED)
+    # imgShowResize=cv.resize(imgShow,None,None,0.25,0.25)
+    # cv.imshow('win',imgShowResize)
+    # cv.waitKey()
 
+    areaRange=[5000,20000]
+    circularityRange=None
+    rectWidthRange=[80,120]
+    rectAspectRatioRange=[0.8,1.2]
+    minRectFillRatio = 0.8
+    centers,validContours = filterContours(contours,
+            areaRange, circularityRange, 
+            rectWidthRange, rectAspectRatioRange, minRectFillRatio)
 
+    # imgShow=gray.copy()
+    # imgShow=cv.drawContours(imgShow, validContours, -1, 255, cv.FILLED)
+    # imgShowResize=cv.resize(imgShow,None,None,0.25,0.25)
+    # cv.imshow('win',imgShowResize)
+    # cv.waitKey()
 
-#Desambiguar origen patron con marcas de colores
-def disambiguatePatternPose(imBgr:np.array,rvec, tvec, cameraMatrix, distCoeffs):
-    #empleando circulo rojo (origen) y verde (eje X)
+    #Filtrar por fondo circundante // pegado sobre fondo blanco
+    #   extraccion media pixeles de resta de blob dilatado
+    blobRefCenterCandidates=[]
+    se=cv.getStructuringElement(cv.MORPH_ELLIPSE,(40,40))
+    for j,(center,contour) in enumerate(zip(centers,validContours)):
+        imgContours=np.zeros(gray.shape,np.uint8)
+        cv.drawContours(imgContours,contour,-1,255,cv.FILLED)
+        imgContourDilate=cv.dilate(imgContours,se)
+        imgExtContours=imgContourDilate-imgContours
+        meanCont = cv.mean(gray,mask=imgExtContours)[0]
+        meanBlob = cv.mean(gray,mask=imgContours)[0]
+
+        # imgShow=gray.copy()
+        # cv.drawContours(imgShow,contour,-1,255,cv.FILLED)
+        # print(j,meanBlob,meanCont)
+        # imgShowResize = cv.resize(imgExtContours,None,None,0.25,0.25)
+        # cv.imshow('win',imgShowResize)
+        # cv.waitKey()
+        
+        if meanCont>80 and meanBlob < meanCont:
+            blobRefCenterCandidates.append(center)
+
+    if len(blobRefCenterCandidates)==0:
+        print(f'No se detectaron blobs de referencia')
+        return None
+    if preview:
+        imgShow = cv.cvtColor(gray, cv.COLOR_GRAY2BGR)
+        for j,(c,menVal) in enumerate(blobRefCenterCandidates):
+            cv.putText(imgShow, f'{j}',(c[0]+50,c[1]+50), 1, 5, (0, 0, 255), 4)
+            cv.circle(imgShow, c, 25, (0,0,255),cv.FILLED)
+            imgShowResize = cv.resize(imgShow,None,None,0.25,0.25)
+            cv.imshow('win',imgShowResize)
+            cv.waitKey()
+    return blobRefCenterCandidates
+
+#Desambiguar origen patron con marcas anexas a origen (negro) y eje x (gris)
+def disambiguatePatternPose(gray:np.array,rvec, tvec, cameraMatrix, distCoeffs):
     #esquinas patron
     pts=np.array([
         0,0,0,
@@ -294,21 +387,26 @@ def disambiguatePatternPose(imBgr:np.array,rvec, tvec, cameraMatrix, distCoeffs)
     #Proyect pts img
     [imPts,_]=cv.projectPoints(pts, rvec, tvec, cameraMatrix, distCoeffs)
     imPts=imPts.squeeze()
-    #asociar esquinas a puntos de colores por distancia minima
-    kps = segmentColoredBlobs(imBgr,np.array([0,0,255,0,255,0]).reshape((2,3)).astype(np.uint8),False)
+    #asociar esquinas a blob cuadrado negro
+    kps = segmentGrayBlobs(gray, False)
     if kps is None:
+        print('no se encontro blob de referencia')
         return None
-    ids=[]
+    #cuadrado de referencia cerca de origen, posteriormente de eje X
+    #   si hay varios candidatos preserva el que tenga menor distancia respecto a cualquier esquina
     kps=np.array(kps)
-    for kp in kps:
-        dists = np.linalg.norm(imPts-kp[np.newaxis,:],2,axis=1)
-        argmin = np.argmin(dists)
-        if dists[argmin]<200:
-            ids.append(int(argmin))
-    if ids[0]==0 and ids[1]==1:
+    #kps vs esquinas
+    deltas = imPts[:,np.newaxis,:]-kps[np.newaxis,:,:]
+    dists = np.linalg.norm(deltas,2,axis=2)
+
+    minsEachKP = np.min(dists,axis=0).squeeze()
+    idKpClose = np.argmin(minsEachKP)
+    sortIdx = np.argsort(dists[:,idKpClose],axis=0)
+    if sortIdx[0]==0 and sortIdx[1]==1:
         return tvec, rvec
-    o = pts[ids[0],:]
-    x = pts[ids[1],:]
+    
+    o = pts[sortIdx[0],:]
+    x = pts[sortIdx[1],:]
     v0x = (x-o)/np.linalg.norm(x-o,2)
     v0y = np.cross(np.array([0,0,1]),v0x)
     v0y = v0y/np.linalg.norm(v0y,2)

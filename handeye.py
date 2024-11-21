@@ -27,7 +27,7 @@ def getRobotPoseAsPosRot(jsonPath):
 if __name__=='__main__':
     np.set_printoptions(precision=3)
     print('hand eye')
-    _pars.pathImgs = './handeye/3/*.tiff'
+    _pars.pathImgs = r'C:\Users\burtasun\source\repos\calibOpenCVPy\KR6 vision\5MP\20241120\noCoplanar3\vis'+'/*.tiff'
     _pars.handEye.pathJsonRobotPoses='./handeye/3/handEyePts.dat'
     #Task: handEyeCalib
     #   Parse set pts robot
@@ -62,10 +62,14 @@ if __name__=='__main__':
     # pathsImages=pathsImages[-2:]
     for i,fname in enumerate(pathsImages):
         im = tiffile.imread(fname)
-        imBgr = cv.cvtColor(img2uint8Percent(im,100),cv.COLOR_RGB2BGR)#niapa
-        gray = cv.cvtColor(imBgr,cv.COLOR_BGR2GRAY)
+        if len(im.shape)==3:
+            gray = cv.cvtColor(im,cv.COLOR_BGR2GRAY)
+        else:
+            gray = im.copy()
+            im = cv.cvtColor(im, cv.COLOR_GRAY2BGR)
+
         if _pars.vis.previewImg:
-             previewImg(imBgr, f'im {fname}')
+             previewImg(im, f'im {fname}')
         #extraer puntos ref img
         [found,pts]=getPtsImg(gray, blobDetector)
         if found==False:
@@ -77,7 +81,10 @@ if __name__=='__main__':
         if retval==False:
             print(f'{i} sin identificar pose patron respecto a camara')
             continue
-        tvec,rvec=disambiguatePatternPose(imBgr,rvec,tvec,cameraMatrix,distCoeffs)
+        tvecRvec=disambiguatePatternPose(gray,rvec,tvec,cameraMatrix,distCoeffs)
+        if tvecRvec is None:
+            continue
+        tvec,rvec=tvecRvec
         
         #añadir poses robot & pose patron
         posRot_cam_pattern.append((tvec,rvec))
@@ -86,16 +93,17 @@ if __name__=='__main__':
         print(f'{i+1}/{len(pathsImages)}')
 
         if _pars.vis.viewUndistort:
-            imBgrRect=imBgr.copy()
+            imRect=im.copy()
             for i in range(3):
-                imBgrRect[...,i]=cv.undistort(imBgr[...,i], cameraMatrix, distCoeffs)
+                imRect[...,i]=cv.undistort(im[...,i], cameraMatrix, distCoeffs)
             pts=np.zeros([4,3],np.float32)
-            pts[1:,:]=np.eye(3,3)*_pars.pat.distEdges
+            pts[1:,:]=np.eye(3,3)*_pars.pat.distEdges*np.min(_pars.pat.dims)
             [imPts,_]=cv.projectPoints(pts, rvec, tvec, cameraMatrix, distCoeffs)
             imPts=imPts.squeeze().astype(np.uint)
             for id in range(1,4):
-                cv.line(imBgrRect,imPts[0,:],imPts[id,:],((id==3)*255,(id==2)*255,(id==1)*255),3)
-            previewImg(imBgrRect)
+                cv.line(imRect,imPts[0,:],imPts[id,:],((id==3)*255,(id==2)*255,(id==1)*255),20)
+            imRectResize = cv.resize(imRect,None,None,0.25,0.25)
+            previewImg(imRectResize)
     #buclePoses
 
     print(f'{len(idValids)} / {len(pathsImages)}!')
