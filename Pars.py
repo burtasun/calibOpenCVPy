@@ -18,8 +18,8 @@ class Pars:
     class Vis:
         previewImg = False
         previewBlobs = False
-        previewPatterns = False
-        viewUndistort = True
+        previewPatterns = 0#0.25#Scale >0 / <=0 disable
+        viewUndistort = False
     vis = Vis()
 _pars = Pars()
 _previewWin='PreviewWin'

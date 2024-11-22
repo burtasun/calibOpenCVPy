@@ -52,11 +52,13 @@ def getPtsImg(
     [found,pts] = cv.findCirclesGrid(\
         img, patDims, flags, blobDetector=blobDetector)#, CirclesGridFinderParameters = circleGridFinderPars)
     if found:
-        if _pars.vis.previewPatterns:
+        if (_pars.vis.previewPatterns>0):
             imgShow = cv.cvtColor(img, cv.COLOR_GRAY2BGR)
             ptsMat = np.copy(pts)
             cv.drawChessboardCorners(imgShow, patDims, ptsMat, True)
-            previewImg(imgShow, "patternImg", 500)
+            s=_pars.vis.previewPatterns
+            imgShowScaled = cv.resize(imgShow,None,None,s,s)
+            previewImg(imgShowScaled, "patternImg", 500)
     return [found,pts]
 #getPtsImg
 

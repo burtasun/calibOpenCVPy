@@ -15,13 +15,13 @@ class E6PosExtractor:
         
         # Regular expression to match lines starting with "DECL E6POS" and capture the identifier and content
         pattern = r"^DECL E6POS\s+(\w+)={(.*)}"
-        
+        counter = 0
         for line in lines:
             # Search for lines that match the pattern
             match = re.match(pattern, line)
             if match:
                 # Capture the position identifier (e.g., XP1, XP2, XP3, etc.)
-                position_id = match.group(1)
+                position_id = counter
                 # Capture the content within the curly braces
                 content = match.group(2)
                 # Parse the content into a dictionary
@@ -43,6 +43,7 @@ class E6PosExtractor:
                     'position_mm': position_mm,
                     'rotationMatrix': rotMat
                 }
+                counter+=1
 
     def _parse_content(self, content):
         # Regular expression to match key-value pairs (e.g., X 387.504486)

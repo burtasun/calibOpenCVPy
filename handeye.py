@@ -3,6 +3,7 @@ import sys
 import glob
 import math
 import numpy as np
+import Quaternion
 import cv2 as cv
 import tiffile
 
@@ -27,8 +28,15 @@ def getRobotPoseAsPosRot(jsonPath):
 if __name__=='__main__':
     np.set_printoptions(precision=3)
     print('hand eye')
-    _pars.pathImgs = r'C:\Users\burtasun\source\repos\calibOpenCVPy\KR6 vision\5MP\20241120\noCoplanar3\vis'+'/*.tiff'
-    _pars.handEye.pathJsonRobotPoses='./handeye/3/handEyePts.dat'
+    # _pars.pathImgs = r'.\KR6 vision\5MP\20241120\both'+'/*.tiff'
+    # _pars.handEye.pathJsonRobotPoses=r'.\KR6 vision\5MP\20241120\both\pts.dat'
+    # _pars.pathImgs = r'.\KR6 vision\5MP\20241120\noCoplanar3\vis'+'/*.tiff'
+    # _pars.handEye.pathJsonRobotPoses=r'.\KR6 vision\5MP\20241120\noCoplanar3\handEyePts_nopl.dat'
+    _pars.pathImgs = r'.\KR6 vision\5MP\20241120\coplanar\vis'+'/*.tiff'
+    _pars.handEye.pathJsonRobotPoses=r'.\KR6 vision\5MP\20241120\coplanar\handEyePts_planar.dat'
+
+    minimizeBothTransforms = True
+
     #Task: handEyeCalib
     #   Parse set pts robot
     #       list tuple pos & R33
@@ -114,40 +122,78 @@ if __name__=='__main__':
     t_cam_pattern, r_cam_pattern = posRot2posAndRot33(posRot_cam_pattern,False)
     t_pattern_cam, r_pattern_cam = posRot2posAndRot33(posRot_cam_pattern,True)
 
-    #OpenCV denom: world = pattern // base: robot base //
-    #Eye in hand
-    #   => parametros por defecto
-    #Pattern in hand / static eye
-    #   => invertir camara y patron // 'world'(pattern) <=> 'cam'
-    r_cam_robot = np.eye(3)
-    t_cam_robot = np.zeros([3,1])
-    r_pattern_flange = np.eye(3)
-    t_pattern_flange = np.zeros([3,1])
-    cv.calibrateRobotWorldHandEye(
-        #inputs
-        R_world2cam=r_pattern_cam,
-        t_world2cam=t_pattern_cam,
-        R_base2gripper=r_flange_robot,
-        t_base2gripper=t_flange_robot,
-        #outputs
-        R_base2world=r_cam_robot,
-        t_base2world=t_cam_robot,
-        R_gripper2cam=r_pattern_flange,
-        t_gripper2cam=t_pattern_flange,
-        method=cv.CALIB_ROBOT_WORLD_HAND_EYE_SHAH)
 
-    T_robot_cam = posRot2M44(invPosRot((t_cam_robot,r_cam_robot)))
-    print(f'T_robot_cam\n{T_robot_cam}')
-    T_flange_pattern = posRot2M44(invPosRot((t_pattern_flange,r_pattern_flange)))
-    print(f'T_flange_pattern\n{T_flange_pattern}')
+    if minimizeBothTransforms:
+        r_pattern_flange = np.eye(3)
+        t_pattern_flange = np.zeros([3,1])
+        r_cam_robot = np.eye(3)
+        t_cam_robot = np.zeros([3,1])
+        cv.calibrateRobotWorldHandEye(
+            #inputs
+            R_world2cam=r_pattern_cam,
+            t_world2cam=t_pattern_cam,
+            R_base2gripper=r_flange_robot,
+            t_base2gripper=t_flange_robot,
+            #outputs
+            R_base2world=r_cam_robot,
+            t_base2world=t_cam_robot,
+            R_gripper2cam=r_pattern_flange,
+            t_gripper2cam=t_pattern_flange,
+            method=cv.CALIB_ROBOT_WORLD_HAND_EYE_SHAH)
+        T_robot_cam = posRot2M44(invPosRot((t_cam_robot,r_cam_robot)))
+        T_pattern_flange = posRot2M44((t_pattern_flange,r_pattern_flange))
+        T_flange_pattern = np.linalg.inv(T_pattern_flange)
+
+    else: #Solo funciona con un set diverso en rotacion
+        r_robot_cam = np.eye(3)
+        t_robot_cam = np.zeros([3,1])
+        cv.calibrateHandEye(
+            #inputs
+            R_gripper2base=r_flange_robot,
+            t_gripper2base=t_flange_robot,
+            R_target2cam=r_cam_pattern,
+            t_target2cam=t_cam_pattern,
+            #outputs
+            R_cam2gripper=r_robot_cam,
+            t_cam2gripper=t_robot_cam,
+            method=cv.CALIB_HAND_EYE_DANIILIDIS
+        )
+        print(t_robot_cam)
+        T_robot_cam = posRot2M44((t_robot_cam,r_robot_cam))
+        T_cam_robot = np.linalg.inv(T_robot_cam)
+
+        #promediado roto-traslacion T_flange_pattern
+        #   media posicion
+        #   media cuaternios normalizado
+        t_flange_pattern=np.zeros((3,))
+        q_flange_pattern=np.array([0.0,0,0,0])
+        for i in range(len(r_flange_robot)):
+            T_flange_robot_i = posRot2M44(invPosRot(posRot_robot_flange[i]))
+            T_cam_pattern_i = posRot2M44(posRot_cam_pattern[i])
+            T_flange_pattern = T_flange_robot_i @ T_robot_cam @ T_cam_pattern_i
+            t_flange_pattern+=T_flange_pattern[:3,3]
+            quat = Quaternion.Quat(T_flange_pattern[:3,:3]).q
+            q_flange_pattern+=quat
+            print(i,T_flange_pattern[:3,3].T)
+
+        t_flange_pattern/=len(r_flange_robot)
+        q_flange_pattern/=np.sqrt(np.sum(q_flange_pattern*q_flange_pattern, axis=-1))
+        r_flange_pattern = Quaternion.Quat(q_flange_pattern).transform
+        T_flange_pattern=np.eye(4)
+        T_flange_pattern[:3,:3]=r_flange_pattern
+        T_flange_pattern[:3,3]=t_flange_pattern
+        T_pattern_flange = np.linalg.inv(T_flange_pattern)
+        print(f'T_robot_cam\n{T_robot_cam}')
+        print(f'T_flange_pattern\n{T_flange_pattern}')
+    #!minimizeBothTransforms
+
 
     def computeMeanErrors():
         #Eye(4)~=T_cam_pattern_i * T_pattern_flange * T_flange_robot_i * T_robot_cam
         #   2 métricas
         #       media errores posición: err = (1/N)*Sum_i^N{||tx^2+ty^2+tz^2||^0.5}
         #       media errores rotación theta rodriguez: err = (1/N)*Sum_i^N{theta_i}
-        T_pattern_flange = posRot2M44((t_pattern_flange,r_pattern_flange))
-        T_robot_cam = posRot2M44(invPosRot((t_cam_robot,r_cam_robot)))
+        # T_pattern_flange = posRot2M44((t_pattern_flange,r_pattern_flange))
         
         N = len(posRot_cam_pattern)
         errsPos=np.zeros(N)#dists
